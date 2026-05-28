@@ -1,0 +1,32 @@
+services:
+  db:
+    container_name: learning-postgres-db
+    image: postgres:12.4
+    restart: "unless-stopped"
+    ports:
+      - "5434:5432"
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes:
+      - database_data:/var/lib/postgresql/data
+  pgadmin:
+    container_name: learning-postgres-pgadmin
+    image: dpage/pgadmin4:6
+    restart: "unless-stopped"
+    ports:
+      - "5054:80"
+    env_file:
+      - ./.env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?set in .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set in .env}
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json
+      - pgadmin_data:/var/lib/pgadmin
+volumes:
+  database_data:
+  pgadmin_data:
