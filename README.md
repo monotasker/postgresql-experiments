@@ -27,7 +27,8 @@ docker compose up -d
 
 The compose stack publishes two services:
 
-- **Postgres 12** on `localhost:5434` (mapped from the container's internal `5432`).
+- **Postgres 14** on `localhost:5434` (mapped from the container's internal `5432`),
+  built with `pg_partman` and `pg_cron` for partition maintenance.
 - **pgAdmin 4** on `localhost:5054`.
 
 ### Accessing pgAdmin
@@ -186,7 +187,8 @@ Progress prints per worker per batch, e.g.
 
 ```text
 .
-├── docker-compose.yml      # Postgres 12 + pgAdmin
+├── docker-compose.yml      # Postgres 14 + pgAdmin
+├── docker/db/Dockerfile    # Postgres 14 + pg_partman + pg_cron
 ├── .env                    # DB credentials (gitignored)
 ├── setup.sh                # Apply all *.sql files in order
 ├── setup_tables.sql        # stats.record_view_events / file_download_events

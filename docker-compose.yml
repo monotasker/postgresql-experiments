@@ -1,7 +1,9 @@
 services:
   db:
     container_name: learning-postgres-db
-    image: postgres:12.4
+    build:
+      context: ./docker/db
+    image: learning-postgres:14-partman-cron
     restart: "unless-stopped"
     ports:
       - "5434:5432"
@@ -11,6 +13,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    # pg_cron must be in shared_preload_libraries (server-wide) and pinned
+    # to a single database where its bookkeeping tables live.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_cron"
+      - "-c"
+      - "cron.database_name=${POSTGRES_DB:?set in .env}"
     volumes:
       - database_data:/var/lib/postgresql/data
   pgadmin:
