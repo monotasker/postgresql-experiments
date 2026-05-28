@@ -1,0 +1,66 @@
+[project]
+name = "postgresql-experiments"
+version = "0.1.0"
+description = "Experimental workspace for exploring a partitioned PostgreSQL stats schema (record view + file download events) with SQLAlchemy."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Ian Scott" }]
+
+dependencies = [
+    # Core ORM / Core layer used to model and query the stats schema.
+    "SQLAlchemy[asyncio]>=2.0,<3.0",
+    # Modern PostgreSQL driver (psycopg 3). Works with both sync and async SQLAlchemy.
+    "psycopg[binary,pool]>=3.1,<4.0",
+    # Schema migrations — handy when iterating on partitioned tables.
+    "alembic>=1.13,<2.0",
+    # Pulls connection settings out of the existing .env file.
+    "python-dotenv>=1.0,<2.0",
+    # Pydantic is convenient for typed payload snapshots that mirror the JSONB columns.
+    "pydantic>=2.6,<3.0",
+]
+
+[project.optional-dependencies]
+# Tools for poking at the data interactively (notebooks, dataframes, plots).
+notebook = [
+    "jupyterlab>=4.0",
+    "ipython>=8.20",
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+]
+
+# Generating realistic-looking events for partition / index experiments.
+fixtures = [
+    "faker>=24.0",
+]
+
+# PEP 735 dependency groups — installed with `uv sync` by default, ignored by
+# downstream consumers. Use this for tooling that isn't part of the project itself.
+[dependency-groups]
+dev = [
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.uv]
+# This is an application / experiment workspace, not a distributable library,
+# so don't try to build & install the project itself into the venv.
+package = false
+# Keep the virtualenv local to the project (this is uv's default; pinned for clarity).
+managed = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["sqlalchemy.ext.mypy.plugin"]
