@@ -1,12 +1,12 @@
 {
   "Servers": {
     "1": {
-      "Name": "learning-postgres-db",
+      "Name": "stats-db",
       "Group": "Servers",
-      "Host": "learning-postgres-db-1",
+      "Host": "localhost",
       "Port": 5434,
       "MaintenanceDB": "postgres",
-      "Username": "ianscott",
+      "Username": "admin",
       "SSLMode": "prefer"
     }
   }

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Convenience script to run sql scripts via psql in our project env.
+
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,8 +18,8 @@ fi
 
 PGHOST="${PGHOST:-localhost}"
 PGPORT="${PGPORT:-5434}"
-PGUSER="${PGUSER:-${POSTGRES_USER:-ianscott}}"
-PGDATABASE="${PGDATABASE:-${POSTGRES_DB:-learning}}"
+PGUSER="${PGUSER:-${POSTGRES_USER:-admin}}"
+PGDATABASE="${PGDATABASE:-${POSTGRES_DB:-stats}}"
 PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
 
 if [[ -z "$PGPASSWORD" ]]; then

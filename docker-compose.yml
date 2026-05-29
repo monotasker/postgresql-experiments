@@ -10,9 +10,9 @@ services:
     env_file:
       - ./.env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
-      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     # pg_cron must be in shared_preload_libraries (server-wide) and pinned
     # to a single database where its bookkeeping tables live.
     command:
@@ -20,11 +20,12 @@ services:
       - "-c"
       - "shared_preload_libraries=pg_cron"
       - "-c"
-      - "cron.database_name=${POSTGRES_DB:?set in .env}"
+      - "cron.database_name=${POSTGRES_DB}"
     volumes:
       - database_data:/var/lib/postgresql/data
   pgadmin:
     container_name: learning-postgres-pgadmin
+    # FIXME: update this to dpage/pgadmin4:9
     image: dpage/pgadmin4:6
     restart: "unless-stopped"
     ports:
@@ -32,8 +33,8 @@ services:
     env_file:
       - ./.env
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?set in .env}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set in .env}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     volumes:
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json
       - pgadmin_data:/var/lib/pgadmin

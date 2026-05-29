@@ -1,6 +1,6 @@
-CREATE SCHEMA IF NOT EXISTS stats;
+CREATE SCHEMA IF NOT EXISTS stats1;
 
-CREATE TABLE stats.record_view_events (
+CREATE TABLE stats1.record_view_events (
   -- Identity ----------------------------------------------------------------
   id bigint GENERATED ALWAYS AS IDENTITY,
   -- Mirrors the OpenSearch _id: "{timestamp}-{sha1(unique_id||visitor_id)}"
@@ -43,9 +43,9 @@ CREATE TABLE stats.record_view_events (
 PARTITION BY
   RANGE ("timestamp");
 
-CREATE TABLE stats.file_download_events (
+CREATE TABLE stats1.file_download_events (
   -- all the shared columns above
-  LIKE stats.record_view_events INCLUDING ALL,
+  LIKE stats1.record_view_events INCLUDING ALL,
   -- File-specific -----------------------------------------------------------
   bucket_id uuid NOT NULL, -- files_bucket.id
   file_id uuid NOT NULL, -- files_files.id
