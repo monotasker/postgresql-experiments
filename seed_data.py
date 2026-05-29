@@ -1,14 +1,10 @@
-#!/usr/bin/env python3
 """Bulk-generate sample events for `stats.record_view_events` and `stats.file_download_events`.
 
-Uses psycopg3 binary ``COPY FROM STDIN`` across multiple worker processes for maximum
-throughput. Designed to insert millions of rows in seconds against a local Postgres.
+Uses psycopg3 binary ``COPY FROM STDIN`` across multiple worker processes. Designed to insert
+millions of rows quickly for local Postgres testing.
 
 Usage
 -----
-    # Make sure dependencies are installed:
-    uv sync
-
     # Insert 1M rows (default: 80% views / 20% downloads):
     uv run python seed_data.py --rows 1_000_000
 
@@ -27,8 +23,6 @@ Notes
   snapshot so repeated events for the same record look consistent.
 """
 
-from __future__ import annotations
-
 import argparse
 import multiprocessing as mp
 import os
@@ -37,7 +31,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +43,7 @@ from psycopg.types.json import Jsonb
 # many disparate scalar / array / JSONB values, so we type them loosely.
 Row = tuple[Any, ...]
 Pools = dict[str, Any]
-WorkerArgs = tuple[
-    int, str, str, int, int, float, float, dict[str, int], int
-]
+WorkerArgs = tuple[int, str, str, str, int, int, float, float, dict[str, int], int]
 
 REPO_ROOT = Path(__file__).resolve().parent
 ENV_PATH = REPO_ROOT / ".env"
@@ -59,64 +51,212 @@ ENV_PATH = REPO_ROOT / ".env"
 # ---------------------------------------------------------------------------
 # Pre-defined value pools. Small enough that random.choice is O(1) and cheap;
 # big enough that the resulting data has reasonable cardinality for indexing
-# experiments. Extend freely.
+# experiments.
 # ---------------------------------------------------------------------------
 COUNTRIES = [
-    "US", "GB", "DE", "FR", "JP", "CA", "AU", "BR", "IN", "CN", "ES", "IT",
-    "NL", "SE", "CH", "NO", "FI", "DK", "BE", "AT", "PL", "MX", "KR", "ZA", "SG",
+    "US",
+    "GB",
+    "DE",
+    "FR",
+    "JP",
+    "CA",
+    "AU",
+    "BR",
+    "IN",
+    "CN",
+    "ES",
+    "IT",
+    "NL",
+    "SE",
+    "CH",
+    "NO",
+    "FI",
+    "DK",
+    "BE",
+    "AT",
+    "PL",
+    "MX",
+    "KR",
+    "ZA",
+    "SG",
 ]
 LANGUAGES = [
-    "en", "fr", "de", "es", "it", "ja", "zh", "ru", "pt", "nl",
-    "ar", "ko", "sv", "no", "fi", "da", "tr", "pl", "cs", "hu",
+    "en",
+    "fr",
+    "de",
+    "es",
+    "it",
+    "ja",
+    "zh",
+    "ru",
+    "pt",
+    "nl",
+    "ar",
+    "ko",
+    "sv",
+    "no",
+    "fi",
+    "da",
+    "tr",
+    "pl",
+    "cs",
+    "hu",
 ]
 ACCESS_STATUSES = ["open", "restricted", "embargoed", "metadata-only"]
 ACCESS_STATUS_WEIGHTS = [70, 10, 10, 10]
 RESOURCE_TYPES = [
-    "publication-article", "publication-book", "publication-conferencepaper",
-    "publication-deliverable", "publication-report", "publication-preprint",
-    "publication-thesis", "publication-workingpaper", "dataset", "software",
-    "image-figure", "image-photo", "image-drawing", "video", "audio",
-    "poster", "presentation", "lesson", "other",
+    "publication-article",
+    "publication-book",
+    "publication-conferencepaper",
+    "publication-deliverable",
+    "publication-report",
+    "publication-preprint",
+    "publication-thesis",
+    "publication-workingpaper",
+    "dataset",
+    "software",
+    "image-figure",
+    "image-photo",
+    "image-drawing",
+    "video",
+    "audio",
+    "poster",
+    "presentation",
+    "lesson",
+    "other",
 ]
 FILE_TYPES = [
-    "pdf", "csv", "zip", "txt", "jpg", "png", "mp4", "tar", "json",
-    "xml", "docx", "xlsx", "gz", "tiff", "wav",
+    "pdf",
+    "csv",
+    "zip",
+    "txt",
+    "jpg",
+    "png",
+    "mp4",
+    "tar",
+    "json",
+    "xml",
+    "docx",
+    "xlsx",
+    "gz",
+    "tiff",
+    "wav",
 ]
 REFERRERS = [
-    "https://www.google.com/", "https://scholar.google.com/",
-    "https://twitter.com/", "https://www.semanticscholar.org/",
-    "https://duckduckgo.com/", "https://www.bing.com/",
-    "https://en.wikipedia.org/", "https://github.com/",
-    "https://orcid.org/", "https://www.nature.com/",
-    None, None, None, None,  # extra Nones bias toward NULL referrers
+    "https://www.google.com/",
+    "https://scholar.google.com/",
+    "https://twitter.com/",
+    "https://www.semanticscholar.org/",
+    "https://duckduckgo.com/",
+    "https://www.bing.com/",
+    "https://en.wikipedia.org/",
+    "https://github.com/",
+    "https://orcid.org/",
+    "https://www.nature.com/",
+    None,
+    None,
+    None,
+    None,  # extra Nones bias toward NULL referrers
 ]
 PUBLISHERS = [
-    "Zenodo", "Elsevier", "Springer Nature", "Wiley", "MDPI", "PLoS",
-    "arXiv", "CERN", "NASA", "NOAA", "CNRS", "DESY", "IEEE", "ACM",
+    "Zenodo",
+    "Elsevier",
+    "Springer Nature",
+    "Wiley",
+    "MDPI",
+    "PLoS",
+    "arXiv",
+    "CERN",
+    "NASA",
+    "NOAA",
+    "CNRS",
+    "DESY",
+    "IEEE",
+    "ACM",
 ]
 JOURNAL_TITLES = [
-    "Nature", "Science", "Cell", "PLoS One", "JBC", "JCAP", "JHEP",
-    "PRD", "PRL", "PNAS", "RSC", "BMJ", "arXiv preprint", "JOSS",
+    "Nature",
+    "Science",
+    "Cell",
+    "PLoS One",
+    "JBC",
+    "JCAP",
+    "JHEP",
+    "PRD",
+    "PRL",
+    "PNAS",
+    "RSC",
+    "BMJ",
+    "arXiv preprint",
+    "JOSS",
 ]
 LABELS = [
-    "new", "featured", "editor-pick", "trending", "preprint",
-    "peer-reviewed", "open-access", "cc-by", "cc0",
+    "new",
+    "featured",
+    "editor-pick",
+    "trending",
+    "preprint",
+    "peer-reviewed",
+    "open-access",
+    "cc-by",
+    "cc0",
 ]
 SUBJECTS = [
-    "physics", "mathematics", "biology", "chemistry", "computer-science",
-    "medicine", "economics", "sociology", "psychology", "engineering",
-    "statistics", "astronomy", "neuroscience", "ecology", "linguistics",
-    "philosophy", "history", "education",
+    "physics",
+    "mathematics",
+    "biology",
+    "chemistry",
+    "computer-science",
+    "medicine",
+    "economics",
+    "sociology",
+    "psychology",
+    "engineering",
+    "statistics",
+    "astronomy",
+    "neuroscience",
+    "ecology",
+    "linguistics",
+    "philosophy",
+    "history",
+    "education",
 ]
 AFFILIATIONS = [
-    "CERN", "MIT", "Stanford", "Harvard", "Oxford", "Cambridge", "ETH Zurich",
-    "Max Planck", "CNRS", "INRIA", "DESY", "Fermilab", "UCL", "TU Munich",
-    "Imperial College", "KAIST", "Tokyo University", "Tsinghua", "Princeton",
-    "Yale", "Caltech", "UCLA",
+    "CERN",
+    "MIT",
+    "Stanford",
+    "Harvard",
+    "Oxford",
+    "Cambridge",
+    "ETH Zurich",
+    "Max Planck",
+    "CNRS",
+    "INRIA",
+    "DESY",
+    "Fermilab",
+    "UCL",
+    "TU Munich",
+    "Imperial College",
+    "KAIST",
+    "Tokyo University",
+    "Tsinghua",
+    "Princeton",
+    "Yale",
+    "Caltech",
+    "UCLA",
 ]
 FUNDERS = [
-    "NSF", "NIH", "ERC", "DFG", "CNRS", "Wellcome Trust",
-    "Gates Foundation", "DOE", "NASA", "JSPS", "UKRI",
+    "NSF",
+    "NIH",
+    "ERC",
+    "DFG",
+    "CNRS",
+    "Wellcome Trust",
+    "Gates Foundation",
+    "DOE",
+    "NASA",
+    "JSPS",
+    "UKRI",
 ]
 RIGHTS = [
     {"id": "cc-by-4.0"},
@@ -131,15 +271,66 @@ RIGHTS = [
 # Columns are listed in COPY order. ``timestamp`` is a reserved word, so we
 # always emit it quoted.
 VIEW_COLUMNS: tuple[str, ...] = (
-    "event_id", "unique_id", '"timestamp"', "updated_timestamp",
-    "visitor_id", "unique_session_id", "is_machine", "is_robot",
-    "country", "referrer", "via_api", "labels",
-    "record_id", "recid", "parent_id", "parent_recid",
-    "community_ids", "access_status", "publisher", "journal_title",
-    "resource_type_id", "file_types", "record_metadata_snapshot",
+    "event_id",
+    "unique_id",
+    '"timestamp"',
+    "updated_timestamp",
+    "visitor_id",
+    "unique_session_id",
+    "is_machine",
+    "is_robot",
+    "country",
+    "referrer",
+    "via_api",
+    "labels",
+    "record_id",
+    "recid",
+    "parent_id",
+    "parent_recid",
+    "community_ids",
+    "access_status",
+    "publisher",
+    "journal_title",
+    "resource_type_id",
+    "file_types",
+    "record_metadata_snapshot",
 )
 DOWNLOAD_COLUMNS: tuple[str, ...] = VIEW_COLUMNS + (
-    "bucket_id", "file_id", "file_key", "size",
+    "bucket_id",
+    "file_id",
+    "file_key",
+    "size",
+)
+VIEW_COLUMN_TYPES: tuple[str, ...] = (
+    "text",
+    "text",
+    "timestamptz",
+    "timestamptz",
+    "text",
+    "text",
+    "bool",
+    "bool",
+    "text",
+    "text",
+    "bool",
+    "text[]",
+    "uuid",
+    "text",
+    "uuid",
+    "text",
+    "uuid[]",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text[]",
+    "jsonb",
+)
+DOWNLOAD_COLUMN_TYPES: tuple[str, ...] = VIEW_COLUMN_TYPES + (
+    "uuid",
+    "uuid",
+    "text",
+    "int8",
 )
 
 
@@ -147,6 +338,7 @@ DOWNLOAD_COLUMNS: tuple[str, ...] = VIEW_COLUMNS + (
 # Pool construction. Built deterministically from --seed so each worker can
 # rebuild the same pools after a process spawn without sharing state.
 # ---------------------------------------------------------------------------
+
 
 def _uuid_from(rng: random.Random) -> uuid.UUID:
     return uuid.UUID(int=rng.getrandbits(128))
@@ -160,7 +352,7 @@ def build_pools(
     num_buckets: int,
     seed: int,
 ) -> Pools:
-    """Pre-compute every value that's shared across many events.
+    """Pre-compute values that are shared across many events.
 
     Per-record properties (publisher, snapshot, etc.) are pinned to a record
     index, so repeated events for the same record look self-consistent.
@@ -175,7 +367,9 @@ def build_pools(
 
     visitor_ids = [rng.randbytes(16).hex() for _ in range(num_visitors)]
     # ~3 sessions per visitor on average
-    session_ids = [rng.randbytes(16).hex() for _ in range(max(num_visitors * 3, num_visitors))]
+    session_ids = [
+        rng.randbytes(16).hex() for _ in range(max(num_visitors * 3, num_visitors))
+    ]
     community_ids_pool = [_uuid_from(rng) for _ in range(num_communities)]
     bucket_ids = [_uuid_from(rng) for _ in range(max(num_buckets, 1))]
 
@@ -198,7 +392,9 @@ def build_pools(
         rng.sample(FILE_TYPES, k=rng.randint(1, 3)) for _ in range(num_records)
     ]
     rec_communities: list[list[uuid.UUID]] = [
-        rng.sample(community_ids_pool, k=rng.choices([0, 1, 2, 3], weights=[5, 60, 30, 5])[0])
+        rng.sample(
+            community_ids_pool, k=rng.choices([0, 1, 2, 3], weights=[5, 60, 30, 5])[0]
+        )
         for _ in range(num_records)
     ]
     # Snapshot dicts -> pre-wrap with Jsonb so psycopg knows the target type.
@@ -206,10 +402,14 @@ def build_pools(
     for rt in rec_resource_type:
         snapshot = {
             "subjects": rng.sample(SUBJECTS, k=rng.randint(1, 4)),
-            "languages": rng.sample(LANGUAGES, k=rng.choices([1, 2], weights=[85, 15])[0]),
+            "languages": rng.sample(
+                LANGUAGES, k=rng.choices([1, 2], weights=[85, 15])[0]
+            ),
             "rights": [rng.choice(RIGHTS)],
             "affiliations": rng.sample(AFFILIATIONS, k=rng.randint(0, 3)),
-            "funders": rng.sample(FUNDERS, k=rng.choices([0, 1, 2], weights=[60, 30, 10])[0]),
+            "funders": rng.sample(
+                FUNDERS, k=rng.choices([0, 1, 2], weights=[60, 30, 10])[0]
+            ),
             "resource_type": {
                 "id": rt,
                 "title": {"en": rt.replace("-", " ").title()},
@@ -236,10 +436,6 @@ def build_pools(
     }
 
 
-# ---------------------------------------------------------------------------
-# Row generation. Hot loop -- keep this lean.
-# ---------------------------------------------------------------------------
-
 def _generate_rows(
     *,
     rng: random.Random,
@@ -251,7 +447,7 @@ def _generate_rows(
     start_counter: int,
     with_file: bool,
 ) -> Iterator[Row]:
-    """Yield ``count`` rows as tuples ready for ``copy.write_row``."""
+    """Yield `count` rows as tuples ready for copy.write_row."""
     parent_ids = pools["parent_ids"]
     record_ids = pools["record_ids"]
     parent_recids = pools["parent_recids"]
@@ -285,7 +481,7 @@ def _generate_rows(
     counter = start_counter
     for _ in range(count):
         ts_epoch = start_epoch + rand() * span_seconds
-        ts = datetime.fromtimestamp(ts_epoch, tz=timezone.utc)
+        ts = datetime.fromtimestamp(ts_epoch, tz=UTC)
 
         rec_idx = randrange(n_records)
         record_id = record_ids[rec_idx]
@@ -353,19 +549,27 @@ def _generate_rows(
 # Worker entrypoint
 # ---------------------------------------------------------------------------
 
-def _copy_sql(table: str) -> str:
+
+def _copy_sql(schema: str, table: str) -> str:
     cols = DOWNLOAD_COLUMNS if table == "downloads" else VIEW_COLUMNS
     qualified = (
-        "stats.file_download_events" if table == "downloads" else "stats.record_view_events"
+        f"{schema}.file_download_events"
+        if table == "downloads"
+        else f"{schema}.record_view_events"
     )
     cols_sql = ", ".join(cols)
     return f"COPY {qualified} ({cols_sql}) FROM STDIN (FORMAT BINARY)"
+
+
+def _copy_types(table: str) -> tuple[str, ...]:
+    return DOWNLOAD_COLUMN_TYPES if table == "downloads" else VIEW_COLUMN_TYPES
 
 
 def worker(args_tuple: WorkerArgs) -> tuple[int, str, int, float]:
     (
         worker_id,
         dsn,
+        schema,
         table,
         num_rows,
         batch_size,
@@ -381,9 +585,12 @@ def worker(args_tuple: WorkerArgs) -> tuple[int, str, int, float]:
     # record/visitor universe.
     pools = build_pools(**pools_meta, seed=seed)
 
-    copy_sql = _copy_sql(table)
+    copy_sql = _copy_sql(schema, table)
+    copy_types = _copy_types(table)
     written = 0
-    counter = worker_id * 10**14  # plenty of headroom; keeps event_ids distinct per worker
+    counter = (
+        worker_id * 10**14
+    )  # plenty of headroom; keeps event_ids distinct per worker
     start = time.perf_counter()
 
     with psycopg.connect(dsn, autocommit=False) as conn:
@@ -393,6 +600,7 @@ def worker(args_tuple: WorkerArgs) -> tuple[int, str, int, float]:
         while written < num_rows:
             this_batch = min(batch_size, num_rows - written)
             with conn.cursor() as cur, cur.copy(copy_sql) as cp:
+                cp.set_types(copy_types)
                 for row in _generate_rows(
                     rng=rng,
                     pools=pools,
@@ -422,6 +630,7 @@ def worker(args_tuple: WorkerArgs) -> tuple[int, str, int, float]:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def build_dsn(args: argparse.Namespace) -> str:
     if args.dsn:
         return str(args.dsn)
@@ -441,22 +650,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--rows", type=int, default=1_000_000, help="Total rows to insert.")
     p.add_argument(
-        "--workers", type=int, default=os.cpu_count() or 4,
+        "--workers",
+        type=int,
+        default=os.cpu_count() or 4,
         help="Number of concurrent COPY workers per table.",
     )
-    p.add_argument("--batch-size", type=int, default=20_000, help="Rows per COPY batch / commit.")
     p.add_argument(
-        "--table", choices=("both", "views", "downloads"), default="both",
+        "--batch-size", type=int, default=20_000, help="Rows per COPY batch / commit."
+    )
+    p.add_argument(
+        "--schema",
+        choices=("stats1", "stats2"),
+        default="stats1",
+        help="Which schema to populate",
+    )
+    p.add_argument(
+        "--table",
+        choices=("both", "views", "downloads"),
+        default="both",
         help="Which table(s) to populate.",
     )
     p.add_argument(
-        "--views-ratio", type=float, default=0.8,
+        "--views-ratio",
+        type=float,
+        default=0.8,
         help="Fraction of rows that go into record_view_events when --table=both.",
     )
-    p.add_argument("--start", default="2019-01-01", help="Earliest event timestamp (UTC).")
-    p.add_argument("--end", default=None, help="Latest event timestamp (UTC, default = now).")
     p.add_argument(
-        "--num-records", type=int, default=10_000,
+        "--start", default="2019-01-01", help="Earliest event timestamp (UTC)."
+    )
+    p.add_argument(
+        "--end", default=None, help="Latest event timestamp (UTC, default = now)."
+    )
+    p.add_argument(
+        "--num-records",
+        type=int,
+        default=10_000,
         help="Size of the synthetic record universe (more = lower per-record event count).",
     )
     p.add_argument("--num-visitors", type=int, default=100_000)
@@ -464,11 +693,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--num-buckets", type=int, default=5_000)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
-        "--truncate", action="store_true",
+        "--truncate",
+        action="store_true",
         help="TRUNCATE the target tables (cascades into partitions) before loading.",
     )
     p.add_argument(
-        "--dsn", default=None,
+        "--dsn",
+        default=None,
         help="psycopg connection URL; overrides .env-derived defaults.",
     )
     return p.parse_args(argv)
@@ -478,10 +709,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     dsn = build_dsn(args)
 
-    start_dt = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    start_dt = datetime.fromisoformat(args.start).replace(tzinfo=UTC)
     end_dt = (
-        datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc)
-        if args.end else datetime.now(tz=timezone.utc)
+        datetime.fromisoformat(args.end).replace(tzinfo=UTC)
+        if args.end
+        else datetime.now(tz=UTC)
     )
     if end_dt <= start_dt:
         print("error: --end must be after --start", file=sys.stderr)
@@ -501,9 +733,9 @@ def main(argv: list[str] | None = None) -> int:
         print("Truncating target tables...", flush=True)
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             if args.table in ("views", "both"):
-                cur.execute("TRUNCATE TABLE stats.record_view_events")
+                cur.execute(f"TRUNCATE TABLE {args.schema}.record_view_events")
             if args.table in ("downloads", "both"):
-                cur.execute("TRUNCATE TABLE stats.file_download_events")
+                cur.execute(f"TRUNCATE TABLE {args.schema}.file_download_events")
 
     # Split totals between tables, then between workers within each table.
     tables: list[tuple[str, int]]
@@ -527,8 +759,16 @@ def main(argv: list[str] | None = None) -> int:
             if count == 0:
                 continue
             worker_args.append((
-                wid, dsn, table, count, args.batch_size,
-                start_epoch, span_seconds, pools_meta, args.seed,
+                wid,
+                dsn,
+                args.schema,
+                table,
+                count,
+                args.batch_size,
+                start_epoch,
+                span_seconds,
+                pools_meta,
+                args.seed,
             ))
             wid += 1
 
